@@ -1,0 +1,19 @@
+{
+  "version": "8.5",
+  "status": "ok",
+  "cli_disabled": {
+    "driver": "cli",
+    "mode": "disabled",
+    "status": "ok"
+  },
+  "cli_enabled_noop": {
+    "driver": "cli",
+    "mode": "enabled-noop",
+    "status": "ok"
+  },
+  "fpm": {
+    "driver": "fpm",
+    "status": "ok",
+    "php_version": "8.5.0-dev"
+  }
+}

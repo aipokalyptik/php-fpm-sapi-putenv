@@ -1,0 +1,306 @@
+diff --git a/ext/standard/basic_functions.c b/ext/standard/basic_functions.c
+index 00713766..c98628f2 100755
+--- a/ext/standard/basic_functions.c
++++ b/ext/standard/basic_functions.c
+@@ -136,6 +136,10 @@ static const zend_module_dep standard_deps[] = { /* {{{ */
+ };
+ /* }}} */
+ 
++PHP_INI_BEGIN()
++	STD_PHP_INI_BOOLEAN("a8c_sapi_putenv.enable", "0", PHP_INI_SYSTEM, OnUpdateBool, a8c_sapi_putenv_enabled, php_basic_globals, basic_globals)
++PHP_INI_END()
++
+ zend_module_entry basic_functions_module = { /* {{{ */
+ 	STANDARD_MODULE_HEADER_EX,
+ 	NULL,
+@@ -291,6 +295,8 @@ PHP_MINIT_FUNCTION(basic) /* {{{ */
+ # endif
+ #endif
+ 
++	REGISTER_INI_ENTRIES();
++
+ 	register_basic_functions_symbols(module_number);
+ 
+ 	php_ce_incomplete_class = register_class___PHP_Incomplete_Class();
+@@ -366,6 +372,7 @@ PHP_MINIT_FUNCTION(basic) /* {{{ */
+ 
+ PHP_MSHUTDOWN_FUNCTION(basic) /* {{{ */
+ {
++	UNREGISTER_INI_ENTRIES();
+ #ifdef HAVE_SYSLOG_H
+ 	PHP_MSHUTDOWN(syslog)(SHUTDOWN_FUNC_ARGS_PASSTHRU);
+ #endif
+@@ -773,11 +780,8 @@ PHP_FUNCTION(getenv)
+ /* }}} */
+ 
+ #ifdef HAVE_PUTENV
+-/* {{{ Set the value of an environment variable */
+-PHP_FUNCTION(putenv)
++static zend_result php_putenv_impl(const char *setting, size_t setting_len, bool update_sapi) /* {{{ */
+ {
+-	char *setting;
+-	size_t setting_len;
+ 	char *p, **env;
+ 	putenv_entry pe;
+ #ifdef PHP_WIN32
+@@ -785,13 +789,13 @@ PHP_FUNCTION(putenv)
+ 	int error_code;
+ #endif
+ 
+-	ZEND_PARSE_PARAMETERS_START(1, 1)
+-		Z_PARAM_STRING(setting, setting_len)
+-	ZEND_PARSE_PARAMETERS_END();
+-
+ 	if (setting_len == 0 || setting[0] == '=') {
+ 		zend_argument_value_error(1, "must have a valid syntax");
+-		RETURN_THROWS();
++		return FAILURE;
++	}
++
++	if (update_sapi && sapi_module.putenv == NULL) {
++		return FAILURE;
+ 	}
+ 
+ 	pe.putenv_string = zend_strndup(setting, setting_len);
+@@ -838,13 +842,13 @@ PHP_FUNCTION(putenv)
+ 			valw = php_win32_cp_any_to_w(value);
+ 		}
+ 		/* valw may be NULL, but the failed conversion still needs to be checked. */
+-		if (!keyw || !valw && value) {
++		if (!keyw || (!valw && value)) {
+ 			tsrm_env_unlock();
+ 			free(pe.putenv_string);
+ 			zend_string_release(pe.key);
+ 			free(keyw);
+ 			free(valw);
+-			RETURN_FALSE;
++			return FAILURE;
+ 		}
+ 
+ 	error_code = SetEnvironmentVariableW(keyw, valw);
+@@ -861,6 +865,16 @@ PHP_FUNCTION(putenv)
+ 	) { /* success */
+ # endif
+ #endif
++		if (update_sapi && sapi_putenv(ZSTR_VAL(pe.key), ZSTR_LEN(pe.key), p ? p + 1 : NULL) != SUCCESS) {
++			tsrm_env_unlock();
++#ifdef PHP_WIN32
++			free(keyw);
++			free(valw);
++#endif
++			free(pe.putenv_string);
++			zend_string_release(pe.key);
++			return FAILURE;
++		}
+ 		zend_hash_add_mem(&BG(putenv_ht), pe.key, &pe, sizeof(putenv_entry));
+ #ifdef HAVE_TZSET
+ 		if (zend_string_equals_literal_ci(pe.key, "TZ")) {
+@@ -872,18 +886,52 @@ PHP_FUNCTION(putenv)
+ 		free(keyw);
+ 		free(valw);
+ #endif
+-		RETURN_TRUE;
++		return SUCCESS;
+ 	} else {
++		tsrm_env_unlock();
+ 		free(pe.putenv_string);
+ 		zend_string_release(pe.key);
+ #ifdef PHP_WIN32
+ 		free(keyw);
+ 		free(valw);
+ #endif
+-		RETURN_FALSE;
++		return FAILURE;
+ 	}
+ }
+ /* }}} */
++
++/* {{{ Set the value of an environment variable */
++PHP_FUNCTION(putenv)
++{
++	char *setting;
++	size_t setting_len;
++
++	ZEND_PARSE_PARAMETERS_START(1, 1)
++		Z_PARAM_STRING(setting, setting_len)
++	ZEND_PARSE_PARAMETERS_END();
++
++	RETURN_BOOL(php_putenv_impl(setting, setting_len, false) == SUCCESS);
++}
++/* }}} */
++
++/* {{{ Set the value of an environment variable and the current SAPI request environment */
++PHP_FUNCTION(a8c_sapi_putenv)
++{
++	char *setting;
++	size_t setting_len;
++
++	ZEND_PARSE_PARAMETERS_START(1, 1)
++		Z_PARAM_STRING(setting, setting_len)
++	ZEND_PARSE_PARAMETERS_END();
++
++	if (!BG(a8c_sapi_putenv_enabled)) {
++		zend_throw_error(NULL, "a8c_sapi_putenv() is disabled");
++		RETURN_THROWS();
++	}
++
++	RETURN_BOOL(php_putenv_impl(setting, setting_len, true) == SUCCESS);
++}
++/* }}} */
+ #endif
+ 
+ /* {{{ free_argv()
+diff --git a/ext/standard/basic_functions.h b/ext/standard/basic_functions.h
+index 34cec376..2a0104da 100644
+--- a/ext/standard/basic_functions.h
++++ b/ext/standard/basic_functions.h
+@@ -61,6 +61,7 @@ typedef int32_t php_int32;
+ typedef struct _php_basic_globals {
+ 	HashTable *user_shutdown_function_names;
+ 	HashTable putenv_ht;
++	bool a8c_sapi_putenv_enabled;
+ 	zend_string *strtok_string;
+ 	zend_string *ctype_string; /* current LC_CTYPE locale (or NULL for 'C') */
+ 	bool locale_changed;   /* locale was changed and has to be restored */
+diff --git a/ext/standard/basic_functions.stub.php b/ext/standard/basic_functions.stub.php
+index 335974b4..52b17912 100755
+--- a/ext/standard/basic_functions.stub.php
++++ b/ext/standard/basic_functions.stub.php
+@@ -1231,6 +1231,8 @@ function getenv(?string $name = null, bool $local_only = false): string|array|fa
+ 
+ #ifdef HAVE_PUTENV
+ function putenv(string $assignment): bool {}
++
++function a8c_sapi_putenv(string $assignment): bool {}
+ #endif
+ 
+ /**
+diff --git a/ext/standard/basic_functions_arginfo.h b/ext/standard/basic_functions_arginfo.h
+index a5b7b9a0..d16fd359 100644
+--- a/ext/standard/basic_functions_arginfo.h
++++ b/ext/standard/basic_functions_arginfo.h
+@@ -399,6 +399,8 @@ ZEND_END_ARG_INFO()
+ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_putenv, 0, 1, _IS_BOOL, 0)
+ 	ZEND_ARG_TYPE_INFO(0, assignment, IS_STRING, 0)
+ ZEND_END_ARG_INFO()
++
++#define arginfo_a8c_sapi_putenv arginfo_putenv
+ #endif
+ 
+ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_getopt, 0, 1, MAY_BE_ARRAY|MAY_BE_FALSE)
+@@ -2309,6 +2311,7 @@ ZEND_FUNCTION(long2ip);
+ ZEND_FUNCTION(getenv);
+ #if defined(HAVE_PUTENV)
+ ZEND_FUNCTION(putenv);
++ZEND_FUNCTION(a8c_sapi_putenv);
+ #endif
+ ZEND_FUNCTION(getopt);
+ ZEND_FUNCTION(flush);
+@@ -2933,6 +2936,7 @@ static const zend_function_entry ext_functions[] = {
+ 	ZEND_FE(getenv, arginfo_getenv)
+ #if defined(HAVE_PUTENV)
+ 	ZEND_FE(putenv, arginfo_putenv)
++	ZEND_FE(a8c_sapi_putenv, arginfo_a8c_sapi_putenv)
+ #endif
+ 	ZEND_FE(getopt, arginfo_getopt)
+ 	ZEND_FE(flush, arginfo_flush)
+diff --git a/main/SAPI.c b/main/SAPI.c
+index 09b028e5..48b50a25 100644
+--- a/main/SAPI.c
++++ b/main/SAPI.c
+@@ -1043,6 +1043,14 @@ SAPI_API char *sapi_getenv(const char *name, size_t name_len)
+ 	return value;
+ }
+ 
++SAPI_API zend_result sapi_putenv(const char *name, size_t name_len, const char *value)
++{
++	if (sapi_module.putenv) {
++		return sapi_module.putenv(name, name_len, value);
++	}
++	return FAILURE;
++}
++
+ SAPI_API int sapi_get_fd(int *fd)
+ {
+ 	if (sapi_module.get_fd) {
+diff --git a/main/SAPI.h b/main/SAPI.h
+index 098b7c8c..8a5d54bd 100644
+--- a/main/SAPI.h
++++ b/main/SAPI.h
+@@ -197,6 +197,7 @@ SAPI_API int sapi_register_input_filter(unsigned int (*input_filter)(int arg, co
+ SAPI_API int sapi_flush(void);
+ SAPI_API zend_stat_t *sapi_get_stat(void);
+ SAPI_API char *sapi_getenv(const char *name, size_t name_len);
++SAPI_API zend_result sapi_putenv(const char *name, size_t name_len, const char *value);
+ 
+ SAPI_API char *sapi_get_default_content_type(void);
+ SAPI_API void sapi_get_default_content_type_header(sapi_header_struct *default_header);
+@@ -265,6 +266,7 @@ struct _sapi_module_struct {
+ 	char *ini_entries;
+ 	const zend_function_entry *additional_functions;
+ 	unsigned int (*input_filter_init)(void);
++	zend_result (*putenv)(const char *name, size_t name_len, const char *value);
+ };
+ 
+ struct _sapi_post_entry {
+@@ -299,7 +301,9 @@ SAPI_API SAPI_TREAT_DATA_FUNC(php_default_treat_data);
+ SAPI_API SAPI_INPUT_FILTER_FUNC(php_default_input_filter);
+ END_EXTERN_C()
+ 
+-#define STANDARD_SAPI_MODULE_PROPERTIES \
++#define STANDARD_SAPI_MODULE_PROPERTIES STANDARD_SAPI_MODULE_PROPERTIES_EX(NULL)
++
++#define STANDARD_SAPI_MODULE_PROPERTIES_EX(sapi_putenv) \
+ 	NULL, /* php_ini_path_override   */ \
+ 	NULL, /* default_post_reader     */ \
+ 	NULL, /* treat_data              */ \
+@@ -315,6 +319,7 @@ END_EXTERN_C()
+ 	0,    /* phpinfo_as_text;        */ \
+ 	NULL, /* ini_entries;            */ \
+ 	NULL, /* additional_functions    */ \
+-	NULL  /* input_filter_init       */
++	NULL, /* input_filter_init       */ \
++	sapi_putenv /* putenv          */
+ 
+ #endif /* SAPI_H */
+diff --git a/sapi/fpm/fpm/fpm_main.c b/sapi/fpm/fpm/fpm_main.c
+index 8ce59a43..d2963e16 100644
+--- a/sapi/fpm/fpm/fpm_main.c
++++ b/sapi/fpm/fpm/fpm_main.c
+@@ -479,21 +479,18 @@ static char *sapi_cgibin_getenv(const char *name, size_t name_len) /* {{{ */
+ }
+ /* }}} */
+ 
+-#if 0
+-static char *_sapi_cgibin_putenv(char *name, char *value) /* {{{ */
++static zend_result sapi_cgibin_putenv(const char *name, size_t name_len, const char *value) /* {{{ */
+ {
+-	int name_len;
++	fcgi_request *request = (fcgi_request*) SG(server_context);
+ 
+-	if (!name) {
+-		return NULL;
++	if (!fpm_is_running || !fcgi_has_env(request) || name_len > INT_MAX) {
++		return FAILURE;
+ 	}
+-	name_len = strlen(name);
+ 
+-	fcgi_request *request = (fcgi_request*) SG(server_context);
+-	return fcgi_putenv(request, name, name_len, value);
++	fcgi_putenv(request, (char *) name, (int) name_len, (char *) value);
++	return SUCCESS;
+ }
+ /* }}} */
+-#endif
+ 
+ static char *sapi_cgi_read_cookies(void) /* {{{ */
+ {
+@@ -801,7 +798,7 @@ static sapi_module_struct cgi_sapi_module = {
+ 	NULL,							/* Get request time */
+ 	NULL,							/* Child terminate */
+ 
+-	STANDARD_SAPI_MODULE_PROPERTIES
++	STANDARD_SAPI_MODULE_PROPERTIES_EX(sapi_cgibin_putenv)
+ };
+ /* }}} */
+ 
