@@ -125,5 +125,5 @@ Memory-safety review:
 Residual risk:
 
 - The private FastCGI layout is not a public ABI. It matched the audited PHP 8.0-8.5 source and passed packaged Debian/Sury fpm runtime testing, but a future PHP minor or downstream distro patch could drift.
-- When `fcgi_putenv` is not exported, the fallback can only update or delete FastCGI params already present in the request. It intentionally does not create brand-new FastCGI request keys, because doing that would require duplicating php-fpm's private hash algorithm.
+- The FastCGI request update path can only update or delete FastCGI params already present in the request. It intentionally does not create brand-new FastCGI request keys, because doing that would require duplicating php-fpm's private hash algorithm.
 - Embedded-NUL input does not crash in fuzzing, but PHP's own `putenv()` semantics around embedded NUL bytes are not useful for real environment names. Operational callers should use normal environment key syntax.

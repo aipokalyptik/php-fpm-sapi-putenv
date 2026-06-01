@@ -67,9 +67,7 @@ for this helper. PHP standard owns `BG(putenv_ht)` and destroys it during its
 normal request shutdown.
 
 The helper updates php-fpm's FastCGI request environment after the process
-environment update succeeds. It first uses a weak `fcgi_putenv` symbol when
-available; if packaged php-fpm does not export that symbol, it falls back to the
-private FastCGI request entry-list layout verified across PHP 8.0-8.5. The
-fallback updates or deletes existing request keys without computing php-fpm's
-private hash algorithm; it does not create brand-new FastCGI request keys unless
-`fcgi_putenv` is exported.
+environment update succeeds by walking the private FastCGI request entry-list
+layout verified across PHP 8.0-8.5. It updates or deletes existing request keys
+without computing php-fpm's private hash algorithm. It intentionally does not
+create brand-new FastCGI request keys.

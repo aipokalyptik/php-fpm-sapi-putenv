@@ -19,8 +19,6 @@ extern char **environ;
 #define A8C_FCGI_HASH_TABLE_SIZE 128
 #define A8C_FCGI_HASH_SEG_SIZE 4096
 
-typedef struct _fcgi_request fcgi_request;
-
 typedef struct _a8c_putenv_entry {
 	char *putenv_string;
 	char *previous_value;
@@ -118,17 +116,6 @@ typedef struct _a8c_fcgi_request {
 	int has_env;
 	a8c_fcgi_hash env;
 } a8c_fcgi_request;
-
-/*
- * fcgi_putenv() is provided by php-fpm, not by every SAPI binary that may load
- * this extension. A weak declaration keeps the extension loadable in CLI while
- * still allowing php-fpm to resolve and use the symbol when it is exported.
- */
-#if defined(__GNUC__) || defined(__clang__)
-extern char *fcgi_putenv(fcgi_request *req, char *var, int var_len, char *val) __attribute__((weak));
-#else
-extern char *fcgi_putenv(fcgi_request *req, char *var, int var_len, char *val);
-#endif
 
 static void a8c_putenv_entry_init(a8c_putenv_entry *entry, const char *setting, size_t setting_len, size_t key_len)
 {
@@ -242,11 +229,6 @@ static zend_result a8c_fcgi_request_putenv(const char *setting, size_t key_len, 
 
 	if (key_len > (size_t) INT_MAX || !((a8c_fcgi_request *) SG(server_context))->has_env) {
 		return FAILURE;
-	}
-
-	if (fcgi_putenv != NULL) {
-		fcgi_putenv((fcgi_request *) SG(server_context), (char *) setting, (int) key_len, (char *) value);
-		return SUCCESS;
 	}
 
 	request = (a8c_fcgi_request *) SG(server_context);

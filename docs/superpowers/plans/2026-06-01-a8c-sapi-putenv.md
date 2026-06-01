@@ -4,7 +4,7 @@
 
 **Goal:** Build and verify a PHP extension that provides `a8c_sapi_putenv()` for scrubbing php-fpm FastCGI request variables from the SAPI getenv path.
 
-**Architecture:** The extension exposes one PHP function and keeps the reusable logic in `src/a8c_sapi_env.c`. It delegates normal environment behavior to PHP's public `php_putenv()` API, then updates php-fpm's current FastCGI request hash through `fcgi_putenv` when available.
+**Architecture:** The extension exposes one PHP function and keeps the reusable logic in `src/a8c_sapi_env.c`. It owns process-environment mutation while recording request shutdown state in PHP standard's `BG(putenv_ht)`, then updates existing php-fpm FastCGI request entries by walking the request entry list without computing php-fpm's private hash algorithm.
 
 **Tech Stack:** PHP 8.0-8.5 phpize extension, Zend Engine C APIs, php-fpm, nginx, Debian amd64 Lima.
 
