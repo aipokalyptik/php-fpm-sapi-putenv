@@ -67,6 +67,7 @@ server {
 
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
+        fastcgi_param A8C_FPM_FUZZ_TARGET "initial";
         fastcgi_pass unix:/run/php/php${version}-fpm.sock;
     }
 }

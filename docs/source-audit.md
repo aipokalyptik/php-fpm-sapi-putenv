@@ -31,4 +31,4 @@ a8c_sapi_putenv('A8C_SECRET');
 
 `a8c_sapi_putenv('NAME=value')` preserves `putenv()` semantics and also updates the FastCGI request hash when php-fpm exposes `fcgi_putenv`. `a8c_sapi_putenv('NAME')` unsets the process environment entry and deletes the FastCGI request hash entry.
 
-The Debian amd64 verification showed that packaged `php-fpm` binaries do not necessarily export `fcgi_putenv`. The extension therefore includes a local fallback for the stable PHP 8.0-8.5 FastCGI request hash layout instead of depending on an exported fpm symbol.
+The Debian amd64 verification showed that packaged `php-fpm` binaries do not necessarily export `fcgi_putenv`. The extension therefore includes a local fallback that walks php-fpm's existing FastCGI request entry list and updates or deletes matching entries without recomputing php-fpm's private hash.

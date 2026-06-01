@@ -17,14 +17,7 @@ extern char **environ;
 #endif
 
 #define A8C_FCGI_HASH_TABLE_SIZE 128
-#define A8C_FCGI_HASH_TABLE_MASK (A8C_FCGI_HASH_TABLE_SIZE - 1)
 #define A8C_FCGI_HASH_SEG_SIZE 4096
-#define A8C_FCGI_HASH_FUNC(var, var_len) \
-	((var_len) < 3 ? (unsigned int) (var_len) : \
-		(((unsigned int) (var)[3]) << 2) + \
-		(((unsigned int) (var)[(var_len) - 2]) << 4) + \
-		(((unsigned int) (var)[(var_len) - 1]) << 2) + \
-		(unsigned int) (var_len))
 
 typedef struct _fcgi_request fcgi_request;
 
@@ -183,12 +176,12 @@ static zend_bool a8c_sapi_is_fastcgi_sapi(void)
 		(strcmp(sapi_module.name, "fpm-fcgi") == 0 || strcmp(sapi_module.name, "cgi-fcgi") == 0);
 }
 
-static char *a8c_fcgi_hash_strndup(a8c_fcgi_hash *hash, const char *str, unsigned int str_len)
+static char *a8c_fcgi_hash_strndup(a8c_fcgi_hash *hash, const char *str, size_t str_len)
 {
 	char *ret;
 
 	if (hash->data->pos + str_len + 1 >= hash->data->end) {
-		unsigned int seg_size = (str_len + 1 > A8C_FCGI_HASH_SEG_SIZE) ? str_len + 1 : A8C_FCGI_HASH_SEG_SIZE;
+		size_t seg_size = (str_len + 1 > A8C_FCGI_HASH_SEG_SIZE) ? str_len + 1 : A8C_FCGI_HASH_SEG_SIZE;
 		a8c_fcgi_data_seg *segment = malloc(sizeof(a8c_fcgi_data_seg) - 1 + seg_size);
 
 		if (segment == NULL) {
@@ -208,66 +201,35 @@ static char *a8c_fcgi_hash_strndup(a8c_fcgi_hash *hash, const char *str, unsigne
 	return ret;
 }
 
-static zend_result a8c_fcgi_hash_set(a8c_fcgi_hash *hash, const char *var, unsigned int var_len, const char *val)
+static zend_result a8c_fcgi_hash_update_existing(a8c_fcgi_hash *hash, const char *var, size_t var_len, const char *val)
 {
-	unsigned int hash_value = A8C_FCGI_HASH_FUNC(var, var_len);
-	unsigned int val_len = (unsigned int) strlen(val);
-	unsigned int idx = hash_value & A8C_FCGI_HASH_TABLE_MASK;
-	a8c_fcgi_hash_bucket *bucket = hash->hash_table[idx];
+	a8c_fcgi_hash_bucket *bucket = hash->list;
+	zend_result result = FAILURE;
 
 	while (bucket != NULL) {
-		if (bucket->hash_value == hash_value &&
-				bucket->var_len == var_len &&
+		if (bucket->var_len == var_len &&
 				memcmp(bucket->var, var, var_len) == 0) {
-			bucket->val_len = val_len;
-			bucket->val = a8c_fcgi_hash_strndup(hash, val, val_len);
-			return bucket->val == NULL ? FAILURE : SUCCESS;
+			if (val == NULL) {
+				bucket->val = NULL;
+				bucket->val_len = 0;
+				result = SUCCESS;
+			} else {
+				size_t val_len = strlen(val);
+				if (val_len > (size_t) UINT_MAX) {
+					return FAILURE;
+				}
+				bucket->val = a8c_fcgi_hash_strndup(hash, val, val_len);
+				if (bucket->val == NULL) {
+					return FAILURE;
+				}
+				bucket->val_len = (unsigned int) val_len;
+				return SUCCESS;
+			}
 		}
-		bucket = bucket->next;
+		bucket = bucket->list_next;
 	}
 
-	if (hash->buckets->idx >= A8C_FCGI_HASH_TABLE_SIZE) {
-		a8c_fcgi_hash_buckets *buckets = malloc(sizeof(a8c_fcgi_hash_buckets));
-		if (buckets == NULL) {
-			return FAILURE;
-		}
-		buckets->idx = 0;
-		buckets->next = hash->buckets;
-		hash->buckets = buckets;
-	}
-
-	bucket = hash->buckets->data + hash->buckets->idx;
-	hash->buckets->idx++;
-	bucket->next = hash->hash_table[idx];
-	hash->hash_table[idx] = bucket;
-	bucket->list_next = hash->list;
-	hash->list = bucket;
-	bucket->hash_value = hash_value;
-	bucket->var_len = var_len;
-	bucket->var = a8c_fcgi_hash_strndup(hash, var, var_len);
-	bucket->val_len = val_len;
-	bucket->val = a8c_fcgi_hash_strndup(hash, val, val_len);
-
-	return bucket->var == NULL || bucket->val == NULL ? FAILURE : SUCCESS;
-}
-
-static void a8c_fcgi_hash_del(a8c_fcgi_hash *hash, const char *var, unsigned int var_len)
-{
-	unsigned int hash_value = A8C_FCGI_HASH_FUNC(var, var_len);
-	unsigned int idx = hash_value & A8C_FCGI_HASH_TABLE_MASK;
-	a8c_fcgi_hash_bucket **bucket = &hash->hash_table[idx];
-
-	while (*bucket != NULL) {
-		if ((*bucket)->hash_value == hash_value &&
-				(*bucket)->var_len == var_len &&
-				memcmp((*bucket)->var, var, var_len) == 0) {
-			(*bucket)->val = NULL;
-			(*bucket)->val_len = 0;
-			*bucket = (*bucket)->next;
-			return;
-		}
-		bucket = &(*bucket)->next;
-	}
+	return result;
 }
 
 static zend_result a8c_fcgi_request_putenv(const char *setting, size_t key_len, const char *value)
@@ -288,12 +250,7 @@ static zend_result a8c_fcgi_request_putenv(const char *setting, size_t key_len, 
 	}
 
 	request = (a8c_fcgi_request *) SG(server_context);
-	if (value == NULL) {
-		a8c_fcgi_hash_del(&request->env, setting, (unsigned int) key_len);
-		return SUCCESS;
-	}
-
-	return a8c_fcgi_hash_set(&request->env, setting, (unsigned int) key_len, value);
+	return a8c_fcgi_hash_update_existing(&request->env, setting, key_len, value);
 }
 
 static zend_result a8c_sapi_split_setting(const char *setting, size_t setting_len, const char **value)

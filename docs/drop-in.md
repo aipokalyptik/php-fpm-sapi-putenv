@@ -69,4 +69,7 @@ normal request shutdown.
 The helper updates php-fpm's FastCGI request environment after the process
 environment update succeeds. It first uses a weak `fcgi_putenv` symbol when
 available; if packaged php-fpm does not export that symbol, it falls back to the
-private FastCGI request hash layout verified across PHP 8.0-8.5.
+private FastCGI request entry-list layout verified across PHP 8.0-8.5. The
+fallback updates or deletes existing request keys without computing php-fpm's
+private hash algorithm; it does not create brand-new FastCGI request keys unless
+`fcgi_putenv` is exported.

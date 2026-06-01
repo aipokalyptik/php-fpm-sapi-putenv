@@ -42,8 +42,12 @@ try {
         }
     }
 
+    $key = 'A8C_FPM_FUZZ_TARGET';
+    if (getenv($key, false) !== 'initial') {
+        throw new RuntimeException('required FastCGI fuzz target is missing');
+    }
+
     for ($i = 0; $i < $iterations; $i++) {
-        $key = 'A8C_FPM_FUZZ_' . $i . '_' . fuzz_ascii(1, 40);
         $value = fuzz_value(512);
 
         if (a8c_sapi_putenv($key . '=' . $value) !== true) {

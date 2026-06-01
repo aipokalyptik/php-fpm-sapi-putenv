@@ -71,7 +71,8 @@ Added:
 Covered cases:
 
 - invalid settings: empty string and leading `=`
-- randomized valid names and values
+- randomized valid names and values in CLI
+- randomized values for an existing FastCGI request key in fpm
 - repeated set/get/unset cycles
 - process environment and SAPI environment agreement
 - retained non-target keys
@@ -115,13 +116,14 @@ Unavailable on the host:
 
 Memory-safety review:
 
-- The FastCGI hash fallback duplicates PHP's 8.0-8.5 private request-hash layout and hash operations.
+- The FastCGI fallback duplicates PHP's 8.0-8.5 private request-hash layout enough to walk the existing request entry list, but it does not duplicate or compute PHP's FastCGI hash algorithm.
 - The fallback is restricted to `fpm-fcgi` and `cgi-fcgi` and requires a non-null `SG(server_context)`.
-- Hash deletion follows PHP's behavior by unlinking from the hash bucket chain and setting `val = NULL`, while leaving the list node so `fcgi_hash_apply()` style iteration skips deleted entries.
-- Hash insertion allocates through `malloc()` because PHP's FastCGI hash storage is cleaned by PHP core with `free()`.
+- Fallback deletion marks matching existing entries with `val = NULL`, which makes `fcgi_hash_get()` return false for the key and makes `fcgi_hash_apply()` style iteration skip the entry.
+- Existing-key updates allocate through `malloc()` because PHP's FastCGI hash storage is cleaned by PHP core with `free()`.
 - The public API is one string argument, parsed with Zend parameter parsing.
 
 Residual risk:
 
 - The private FastCGI layout is not a public ABI. It matched the audited PHP 8.0-8.5 source and passed packaged Debian/Sury fpm runtime testing, but a future PHP minor or downstream distro patch could drift.
+- When `fcgi_putenv` is not exported, the fallback can only update or delete FastCGI params already present in the request. It intentionally does not create brand-new FastCGI request keys, because doing that would require duplicating php-fpm's private hash algorithm.
 - Embedded-NUL input does not crash in fuzzing, but PHP's own `putenv()` semantics around embedded NUL bytes are not useful for real environment names. Operational callers should use normal environment key syntax.
