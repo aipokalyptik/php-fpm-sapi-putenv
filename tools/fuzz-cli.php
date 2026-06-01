@@ -38,6 +38,37 @@ foreach ($invalid as $setting) {
     }
 }
 
+if (function_exists('putenv')) {
+    for ($i = 0; $i < 1000; $i++) {
+        $key = 'A8C_MIXED_FUZZ_' . $i . '_' . random_ascii(1, 32);
+        $coreValue = random_value(128);
+        $a8cValue = random_value(128);
+        $finalValue = random_value(128);
+
+        if (putenv($key . '=' . $coreValue) !== true) {
+            throw new RuntimeException("initial putenv failed at mixed iteration {$i}");
+        }
+        if (a8c_sapi_putenv($key . '=' . $a8cValue) !== true) {
+            throw new RuntimeException("a8c set failed at mixed iteration {$i}");
+        }
+        if (getenv($key, true) !== $a8cValue || getenv($key, false) !== $a8cValue) {
+            throw new RuntimeException("a8c mixed set mismatch at iteration {$i}");
+        }
+        if (putenv($key . '=' . $finalValue) !== true) {
+            throw new RuntimeException("final putenv failed at mixed iteration {$i}");
+        }
+        if (getenv($key, true) !== $finalValue || getenv($key, false) !== $finalValue) {
+            throw new RuntimeException("putenv mixed set mismatch at iteration {$i}");
+        }
+        if (a8c_sapi_putenv($key) !== true) {
+            throw new RuntimeException("a8c mixed unset failed at iteration {$i}");
+        }
+        if (getenv($key, true) !== false || getenv($key, false) !== false) {
+            throw new RuntimeException("a8c mixed unset mismatch at iteration {$i}");
+        }
+    }
+}
+
 for ($i = 0; $i < $iterations; $i++) {
     $key = 'A8C_FUZZ_' . $i . '_' . random_ascii(1, 48);
     $value = random_value(256);

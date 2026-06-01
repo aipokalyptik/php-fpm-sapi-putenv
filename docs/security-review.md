@@ -14,10 +14,11 @@ Scope:
 
 No memory-safety crash, secret-retention bypass, or unintended key deletion was found in the tested PHP 8.0-8.5 matrix.
 
-Two implementation issues were fixed during review:
+Implementation issues fixed during review:
 
 - The return value from the php-fpm FastCGI request hash update is now propagated. Before that change, an allocation failure or unexpected FastCGI request state could have returned `true` after updating only the process environment.
 - `a8c_sapi_putenv()` no longer depends on PHP's registered `putenv()` function, so it still works when `disable_functions=putenv` is configured.
+- The process-environment bookkeeping now writes to PHP standard's existing `BG(putenv_ht)` table instead of a parallel extension-owned restore table. This preserves core `putenv()` interleaving semantics and removes the ZTS module-globals requirement.
 
 ## Findings
 
@@ -41,7 +42,23 @@ Fatal error: Uncaught Error: Invalid callback putenv, function "putenv" not foun
 
 Fix:
 
-The extension now owns its process-environment update path and request-shutdown restore table instead of calling the registered `putenv()` function. Regression coverage is in `tests/003-disable-functions.phpt`, and fpm fuzzing configures `php_admin_value[disable_functions] = putenv`.
+The extension now owns its process-environment update path instead of calling the registered `putenv()` function, but it records request-shutdown restore state in PHP standard's `BG(putenv_ht)`. Regression coverage is in `tests/003-disable-functions.phpt`, and fpm fuzzing configures `php_admin_value[disable_functions] = putenv`.
+
+### Fixed: parallel restore table interaction with core `putenv()`
+
+An intermediate implementation kept a separate extension-owned restore table. That created a lifetime hazard when user code interleaved PHP core `putenv()` with `a8c_sapi_putenv()` on the same key, because the two request-shutdown destructors could restore pointers owned by the other table.
+
+Fix:
+
+`a8c_sapi_putenv()` now mirrors PHP core's process-environment mutation logic directly into `BG(putenv_ht)`. This gives both APIs one shared del-before-add table, so interleaving `putenv()` and `a8c_sapi_putenv()` on the same key uses the same request-shutdown ownership model as core. Coverage is in `tests/004-mixed-putenv.phpt` and the mixed-API section of `tools/fuzz-cli.php`.
+
+### Fixed: ZTS module globals registration
+
+The same intermediate implementation declared extension module globals for its parallel restore table without registering them for ZTS builds.
+
+Fix:
+
+The extension no longer declares module globals. It uses PHP standard's already-registered `BG(putenv_ht)`, so there is no extension-local globals allocation path to maintain for ZTS.
 
 ## Fuzz Coverage
 
@@ -58,6 +75,7 @@ Covered cases:
 - repeated set/get/unset cycles
 - process environment and SAPI environment agreement
 - retained non-target keys
+- mixed `putenv()` and `a8c_sapi_putenv()` operations on the same key
 - embedded NUL smoke cases
 - php-fpm FastCGI request hash set/delete path via nginx
 
@@ -75,7 +93,7 @@ tools/lima-verify.sh
 
 Results:
 
-- Local PHP 8.5 PHPTs: 3/3 passed
+- Local PHP 8.5 PHPTs: 4/4 passed
 - Local PHP 8.5 CLI fuzz: 20,000 iterations passed
 - Debian amd64 PHP 8.5 fpm fuzz with `putenv` disabled: 20,000 iterations passed
 - Debian amd64 PHP 8.0-8.5 matrix: baseline and scrub verification passed for every version

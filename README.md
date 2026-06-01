@@ -85,7 +85,7 @@ php-fpm fuzzing in Debian amd64 Lima:
 ITERATIONS=20000 SEED=43148 VERSION=8.5 tools/lima-fuzz.sh
 ```
 
-The fpm fuzz harness sets `disable_functions=putenv` for the target pool so this extension's independent process-environment path is exercised.
+The fpm fuzz harness sets `disable_functions=putenv` for the target pool so this extension's process-environment path is exercised without PHP's registered `putenv()` function.
 
 The review notes and latest fuzz evidence are in `docs/security-review.md`.
 
