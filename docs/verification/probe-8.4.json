@@ -1,0 +1,25 @@
+{
+    "php_version": "8.4.21",
+    "sapi": "fpm-fcgi",
+    "extension_loaded": true,
+    "keys": {
+        "A8C_SECRET_ONE": {
+            "env_superglobal": "secret-one-8.4",
+            "server_superglobal": "secret-one-8.4",
+            "getenv_local": "secret-one-8.4",
+            "getenv_sapi": "secret-one-8.4"
+        },
+        "A8C_SECRET_TWO": {
+            "env_superglobal": "secret-two-8.4",
+            "server_superglobal": "secret-two-8.4",
+            "getenv_local": "secret-two-8.4",
+            "getenv_sapi": "secret-two-8.4"
+        },
+        "A8C_KEEP_ME": {
+            "env_superglobal": "keep-me-8.4",
+            "server_superglobal": "keep-me-8.4",
+            "getenv_local": "keep-me-8.4",
+            "getenv_sapi": "keep-me-8.4"
+        }
+    }
+}
