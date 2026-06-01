@@ -31,19 +31,19 @@ typedef struct _a8c_putenv_entry {
 } a8c_putenv_entry;
 
 typedef struct _a8c_fcgi_hash_bucket {
-	unsigned int hash_value;
+	unsigned int reserved_hash_value;
 	unsigned int var_len;
 	char *var;
 	unsigned int val_len;
 	char *val;
-	struct _a8c_fcgi_hash_bucket *next;
+	struct _a8c_fcgi_hash_bucket *reserved_chain_next;
 	struct _a8c_fcgi_hash_bucket *list_next;
 } a8c_fcgi_hash_bucket;
 
 typedef struct _a8c_fcgi_hash_buckets {
-	unsigned int idx;
-	struct _a8c_fcgi_hash_buckets *next;
-	a8c_fcgi_hash_bucket data[A8C_FCGI_HASH_TABLE_SIZE];
+	unsigned int reserved_idx;
+	struct _a8c_fcgi_hash_buckets *reserved_next;
+	a8c_fcgi_hash_bucket reserved_data[A8C_FCGI_HASH_TABLE_SIZE];
 } a8c_fcgi_hash_buckets;
 
 typedef struct _a8c_fcgi_data_seg {
@@ -54,35 +54,29 @@ typedef struct _a8c_fcgi_data_seg {
 } a8c_fcgi_data_seg;
 
 typedef struct _a8c_fcgi_hash {
-	a8c_fcgi_hash_bucket *hash_table[A8C_FCGI_HASH_TABLE_SIZE];
+	a8c_fcgi_hash_bucket *reserved_hash_table[A8C_FCGI_HASH_TABLE_SIZE];
 	a8c_fcgi_hash_bucket *list;
-	a8c_fcgi_hash_buckets *buckets;
+	a8c_fcgi_hash_buckets *reserved_buckets;
 	a8c_fcgi_data_seg *data;
 } a8c_fcgi_hash;
 
-typedef struct _a8c_fcgi_req_hook {
-	void (*on_accept)(void);
-	void (*on_read)(void);
-	void (*on_close)(void);
-} a8c_fcgi_req_hook;
-
 typedef struct _a8c_fcgi_end_request {
-	unsigned char appStatusB3;
-	unsigned char appStatusB2;
-	unsigned char appStatusB1;
-	unsigned char appStatusB0;
-	unsigned char protocolStatus;
+	unsigned char reserved_app_status_b3;
+	unsigned char reserved_app_status_b2;
+	unsigned char reserved_app_status_b1;
+	unsigned char reserved_app_status_b0;
+	unsigned char reserved_protocol_status;
 	unsigned char reserved[3];
 } a8c_fcgi_end_request;
 
 typedef struct _a8c_fcgi_header {
-	unsigned char version;
-	unsigned char type;
-	unsigned char requestIdB1;
-	unsigned char requestIdB0;
-	unsigned char contentLengthB1;
-	unsigned char contentLengthB0;
-	unsigned char paddingLength;
+	unsigned char reserved_version;
+	unsigned char reserved_type;
+	unsigned char reserved_request_id_b1;
+	unsigned char reserved_request_id_b0;
+	unsigned char reserved_content_length_b1;
+	unsigned char reserved_content_length_b0;
+	unsigned char reserved_padding_length;
 	unsigned char reserved;
 } a8c_fcgi_header;
 
@@ -97,22 +91,24 @@ typedef struct _a8c_fcgi_end_request_rec {
  * be dropped into another extension without depending on non-installed headers.
  */
 typedef struct _a8c_fcgi_request {
-	int listen_socket;
-	int tcp;
-	int fd;
-	int id;
-	int keep;
+	int reserved_listen_socket;
+	int reserved_tcp;
+	int reserved_fd;
+	int reserved_id;
+	int reserved_keep;
 #ifdef TCP_NODELAY
-	int nodelay;
+	int reserved_nodelay;
 #endif
-	int ended;
-	int in_len;
-	int in_pad;
-	a8c_fcgi_header *out_hdr;
-	unsigned char *out_pos;
-	unsigned char out_buf[1024 * 8];
+	int reserved_ended;
+	int reserved_in_len;
+	int reserved_in_pad;
+	a8c_fcgi_header *reserved_out_hdr;
+	unsigned char *reserved_out_pos;
+	unsigned char reserved_out_buf[1024 * 8];
 	unsigned char reserved[sizeof(a8c_fcgi_end_request_rec)];
-	a8c_fcgi_req_hook hook;
+	void (*reserved_hook_on_accept)(void);
+	void (*reserved_hook_on_read)(void);
+	void (*reserved_hook_on_close)(void);
 	int has_env;
 	a8c_fcgi_hash env;
 } a8c_fcgi_request;
