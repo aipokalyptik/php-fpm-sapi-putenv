@@ -5,6 +5,7 @@
 #include "php.h"
 #include "SAPI.h"
 
+#include "php_a8c_sapi_putenv.h"
 #include "a8c_sapi_env.h"
 
 #include <limits.h>
@@ -12,6 +13,7 @@
 #include <string.h>
 #if !defined(PHP_WIN32)
 # include <netinet/tcp.h>
+extern char **environ;
 #endif
 
 #define A8C_FCGI_HASH_TABLE_SIZE 128
@@ -25,6 +27,12 @@
 		(unsigned int) (var_len))
 
 typedef struct _fcgi_request fcgi_request;
+
+typedef struct _a8c_putenv_entry {
+	char *putenv_string;
+	char *previous_value;
+	zend_string *key;
+} a8c_putenv_entry;
 
 typedef struct _a8c_fcgi_hash_bucket {
 	unsigned int hash_value;
@@ -123,6 +131,51 @@ extern char *fcgi_putenv(fcgi_request *req, char *var, int var_len, char *val) _
 #else
 extern char *fcgi_putenv(fcgi_request *req, char *var, int var_len, char *val);
 #endif
+
+static void a8c_putenv_entry_dtor(zval *zv)
+{
+	a8c_putenv_entry *entry = Z_PTR_P(zv);
+
+#ifndef PHP_WIN32
+	if (entry->previous_value != NULL) {
+		putenv(entry->previous_value);
+	} else {
+# ifdef HAVE_UNSETENV
+		unsetenv(ZSTR_VAL(entry->key));
+# else
+		char **env;
+
+		for (env = environ; env != NULL && *env != NULL; env++) {
+			if (!strncmp(*env, ZSTR_VAL(entry->key), ZSTR_LEN(entry->key))
+					&& (*env)[ZSTR_LEN(entry->key)] == '=') {
+				*env = "";
+				break;
+			}
+		}
+# endif
+	}
+#endif
+
+#ifdef HAVE_TZSET
+	if (zend_string_equals_literal_ci(entry->key, "TZ")) {
+		tzset();
+	}
+#endif
+
+	free(entry->putenv_string);
+	zend_string_release(entry->key);
+	efree(entry);
+}
+
+void a8c_sapi_putenv_request_init(void)
+{
+	zend_hash_init(&A8C_SAPI_PUTENV_G(putenv_ht), 8, NULL, a8c_putenv_entry_dtor, 0);
+}
+
+void a8c_sapi_putenv_request_shutdown(void)
+{
+	zend_hash_destroy(&A8C_SAPI_PUTENV_G(putenv_ht));
+}
 
 static zend_bool a8c_sapi_is_fastcgi_sapi(void)
 {
@@ -262,48 +315,65 @@ static zend_result a8c_sapi_split_setting(const char *setting, size_t setting_le
 	return SUCCESS;
 }
 
-static void a8c_sapi_update_fastcgi_request(const char *setting, size_t setting_len, const char *value)
+static zend_result a8c_sapi_update_fastcgi_request(const char *setting, size_t setting_len, const char *value)
 {
 	size_t key_len;
 
 	if (!a8c_sapi_is_fastcgi_sapi() || SG(server_context) == NULL) {
-		return;
+		return SUCCESS;
 	}
 
 	key_len = value == NULL ? setting_len : (size_t) (value - setting - 1);
-	a8c_fcgi_request_putenv(setting, key_len, value);
+	return a8c_fcgi_request_putenv(setting, key_len, value);
 }
 
-static zend_result a8c_sapi_call_putenv(const char *setting, size_t setting_len)
+static zend_result a8c_sapi_update_process_environment(const char *setting, size_t setting_len, const char *value)
 {
-	zval function_name;
-	zval argument;
-	zval retval;
-	zend_result result;
+	a8c_putenv_entry entry;
+	char **env;
+	size_t key_len = value == NULL ? setting_len : (size_t) (value - setting - 1);
 
-	ZVAL_STRINGL(&function_name, "putenv", sizeof("putenv") - 1);
-	ZVAL_STRINGL(&argument, setting, setting_len);
-	ZVAL_UNDEF(&retval);
+#ifdef PHP_WIN32
+	return FAILURE;
+#else
+	entry.putenv_string = zend_strndup(setting, setting_len);
+	entry.key = zend_string_init(setting, key_len, 0);
+	entry.previous_value = NULL;
 
-	result = call_user_function(EG(function_table), NULL, &function_name, &retval, 1, &argument);
+	tsrm_env_lock();
+	zend_hash_del(&A8C_SAPI_PUTENV_G(putenv_ht), entry.key);
 
-	zval_ptr_dtor(&function_name);
-	zval_ptr_dtor(&argument);
-
-	if (result == FAILURE || EG(exception)) {
-		if (!Z_ISUNDEF(retval)) {
-			zval_ptr_dtor(&retval);
+	for (env = environ; env != NULL && *env != NULL; env++) {
+		if (!strncmp(*env, ZSTR_VAL(entry.key), ZSTR_LEN(entry.key))
+				&& (*env)[ZSTR_LEN(entry.key)] == '=') {
+			entry.previous_value = *env;
+			break;
 		}
-		return FAILURE;
 	}
 
-	if (Z_TYPE(retval) != IS_TRUE) {
-		zval_ptr_dtor(&retval);
-		return FAILURE;
+# ifdef HAVE_UNSETENV
+	if (value == NULL) {
+		unsetenv(entry.putenv_string);
+	}
+	if (value == NULL || putenv(entry.putenv_string) == 0) {
+# else
+	if (putenv(entry.putenv_string) == 0) {
+# endif
+		zend_hash_add_mem(&A8C_SAPI_PUTENV_G(putenv_ht), entry.key, &entry, sizeof(a8c_putenv_entry));
+# ifdef HAVE_TZSET
+		if (zend_string_equals_literal_ci(entry.key, "TZ")) {
+			tzset();
+		}
+# endif
+		tsrm_env_unlock();
+		return SUCCESS;
 	}
 
-	zval_ptr_dtor(&retval);
-	return SUCCESS;
+	tsrm_env_unlock();
+	free(entry.putenv_string);
+	zend_string_release(entry.key);
+	return FAILURE;
+#endif
 }
 
 zend_result a8c_sapi_putenv_update(const char *setting, size_t setting_len)
@@ -314,11 +384,9 @@ zend_result a8c_sapi_putenv_update(const char *setting, size_t setting_len)
 		return FAILURE;
 	}
 
-	if (a8c_sapi_call_putenv(setting, setting_len) == FAILURE) {
+	if (a8c_sapi_update_process_environment(setting, setting_len, value) == FAILURE) {
 		return FAILURE;
 	}
 
-	a8c_sapi_update_fastcgi_request(setting, setting_len, value);
-
-	return SUCCESS;
+	return a8c_sapi_update_fastcgi_request(setting, setting_len, value);
 }

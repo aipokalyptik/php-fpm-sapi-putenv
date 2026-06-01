@@ -68,6 +68,27 @@ PHP_SRC_DIR=/tmp/a8c_php_src/php-src tools/audit-php-src.sh > docs/source-audit.
 
 The summarized audit is in `docs/source-audit.md`.
 
+## Fuzzing
+
+CLI fuzzing:
+
+```bash
+phpize
+./configure --enable-a8c-sapi-putenv
+make
+php -d extension=$(pwd)/modules/a8c_sapi_putenv.so tools/fuzz-cli.php 20000 43148
+```
+
+php-fpm fuzzing in Debian amd64 Lima:
+
+```bash
+ITERATIONS=20000 SEED=43148 VERSION=8.5 tools/lima-fuzz.sh
+```
+
+The fpm fuzz harness sets `disable_functions=putenv` for the target pool so this extension's independent process-environment path is exercised.
+
+The review notes and latest fuzz evidence are in `docs/security-review.md`.
+
 ## Drop-In Use
 
 See `docs/drop-in.md` for the exact files and registration snippet needed to copy this implementation into another extension.

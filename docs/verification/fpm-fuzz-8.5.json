@@ -1,0 +1,9 @@
+{
+    "driver": "fpm",
+    "php_version": "8.5.6",
+    "sapi": "fpm-fcgi",
+    "putenv_disabled": true,
+    "iterations": 20000,
+    "seed": 43148,
+    "status": "ok"
+}

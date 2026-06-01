@@ -7,6 +7,10 @@
 #include "src/a8c_sapi_env.h"
 
 PHP_FUNCTION(a8c_sapi_putenv);
+PHP_RINIT_FUNCTION(a8c_sapi_putenv);
+PHP_RSHUTDOWN_FUNCTION(a8c_sapi_putenv);
+
+ZEND_DECLARE_MODULE_GLOBALS(a8c_sapi_putenv)
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_a8c_sapi_putenv, 0, 1, _IS_BOOL, 0)
 	ZEND_ARG_TYPE_INFO(0, assignment, IS_STRING, 0)
@@ -23,8 +27,8 @@ zend_module_entry a8c_sapi_putenv_module_entry = {
 	a8c_sapi_putenv_functions,
 	NULL,
 	NULL,
-	NULL,
-	NULL,
+	PHP_RINIT(a8c_sapi_putenv),
+	PHP_RSHUTDOWN(a8c_sapi_putenv),
 	NULL,
 	PHP_A8C_SAPI_PUTENV_VERSION,
 	STANDARD_MODULE_PROPERTIES
@@ -54,4 +58,20 @@ PHP_FUNCTION(a8c_sapi_putenv)
 	}
 
 	RETURN_TRUE;
+}
+
+PHP_RINIT_FUNCTION(a8c_sapi_putenv)
+{
+#if defined(ZTS) && defined(COMPILE_DL_A8C_SAPI_PUTENV)
+	ZEND_TSRMLS_CACHE_UPDATE();
+#endif
+
+	a8c_sapi_putenv_request_init();
+	return SUCCESS;
+}
+
+PHP_RSHUTDOWN_FUNCTION(a8c_sapi_putenv)
+{
+	a8c_sapi_putenv_request_shutdown();
+	return SUCCESS;
 }
