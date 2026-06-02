@@ -37,3 +37,7 @@ Run the Debian amd64 Lima build and FPM/nginx validation with:
 ```sh
 php-patches/tools/lima-build-test.sh
 ```
+
+The FPM validation pool sets `disable_functions=putenv` and asserts that
+userland `putenv()` is unavailable while `a8c_sapi_putenv()` still scrubs the
+FastCGI request environment.

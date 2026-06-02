@@ -1,5 +1,5 @@
 diff --git a/ext/standard/basic_functions.c b/ext/standard/basic_functions.c
-index adc549e0..33b5f9d3 100644
+index adc549e0..ea564b35 100644
 --- a/ext/standard/basic_functions.c
 +++ b/ext/standard/basic_functions.c
 @@ -141,6 +141,10 @@ static const zend_module_dep standard_deps[] = { /* {{{ */
@@ -30,110 +30,15 @@ index adc549e0..33b5f9d3 100644
  #ifdef ZTS
  	ts_free_id(basic_globals_id);
  #ifdef PHP_WIN32
-@@ -759,11 +766,8 @@ PHP_FUNCTION(getenv)
- /* }}} */
- 
- #ifdef HAVE_PUTENV
--/* {{{ Set the value of an environment variable */
--PHP_FUNCTION(putenv)
-+static zend_result php_putenv_impl(const char *setting, size_t setting_len, bool update_sapi) /* {{{ */
- {
--	char *setting;
--	size_t setting_len;
- 	char *p, **env;
- 	putenv_entry pe;
- #ifdef PHP_WIN32
-@@ -771,13 +775,13 @@ PHP_FUNCTION(putenv)
- 	int error_code;
- #endif
- 
--	ZEND_PARSE_PARAMETERS_START(1, 1)
--		Z_PARAM_STRING(setting, setting_len)
--	ZEND_PARSE_PARAMETERS_END();
--
- 	if (setting_len == 0 || setting[0] == '=') {
- 		zend_argument_value_error(1, "must have a valid syntax");
--		RETURN_THROWS();
-+		return FAILURE;
-+	}
-+
-+	if (update_sapi && sapi_module.putenv == NULL) {
-+		return FAILURE;
- 	}
- 
- 	pe.putenv_string = zend_strndup(setting, setting_len);
-@@ -824,13 +828,13 @@ PHP_FUNCTION(putenv)
- 			valw = php_win32_cp_any_to_w(value);
- 		}
- 		/* valw may be NULL, but the failed conversion still needs to be checked. */
--		if (!keyw || !valw && value) {
-+		if (!keyw || (!valw && value)) {
- 			tsrm_env_unlock();
- 			free(pe.putenv_string);
- 			zend_string_release(pe.key);
- 			free(keyw);
- 			free(valw);
--			RETURN_FALSE;
-+			return FAILURE;
- 		}
- 
- 	error_code = SetEnvironmentVariableW(keyw, valw);
-@@ -847,6 +851,16 @@ PHP_FUNCTION(putenv)
- 	) { /* success */
- # endif
- #endif
-+		if (update_sapi && sapi_putenv(ZSTR_VAL(pe.key), ZSTR_LEN(pe.key), p ? p + 1 : NULL) != SUCCESS) {
-+			tsrm_env_unlock();
-+#ifdef PHP_WIN32
-+			free(keyw);
-+			free(valw);
-+#endif
-+			free(pe.putenv_string);
-+			zend_string_release(pe.key);
-+			return FAILURE;
-+		}
- 		zend_hash_add_mem(&BG(putenv_ht), pe.key, &pe, sizeof(putenv_entry));
- #ifdef HAVE_TZSET
- 		if (zend_string_equals_literal_ci(pe.key, "TZ")) {
-@@ -858,18 +872,52 @@ PHP_FUNCTION(putenv)
- 		free(keyw);
- 		free(valw);
- #endif
--		RETURN_TRUE;
-+		return SUCCESS;
- 	} else {
-+		tsrm_env_unlock();
- 		free(pe.putenv_string);
- 		zend_string_release(pe.key);
- #ifdef PHP_WIN32
- 		free(keyw);
- 		free(valw);
- #endif
--		RETURN_FALSE;
-+		return FAILURE;
+@@ -870,6 +877,44 @@ PHP_FUNCTION(putenv)
  	}
  }
  /* }}} */
-+
-+/* {{{ Set the value of an environment variable */
-+PHP_FUNCTION(putenv)
-+{
-+	char *setting;
-+	size_t setting_len;
-+
-+	ZEND_PARSE_PARAMETERS_START(1, 1)
-+		Z_PARAM_STRING(setting, setting_len)
-+	ZEND_PARSE_PARAMETERS_END();
-+
-+	RETURN_BOOL(php_putenv_impl(setting, setting_len, false) == SUCCESS);
-+}
-+/* }}} */
-+
 +/* {{{ Set the value of an environment variable and the current SAPI request environment */
 +PHP_FUNCTION(a8c_sapi_putenv)
 +{
-+	char *setting;
-+	size_t setting_len;
++	char *setting, *p;
++	size_t setting_len, key_len;
 +
 +	ZEND_PARSE_PARAMETERS_START(1, 1)
 +		Z_PARAM_STRING(setting, setting_len)
@@ -144,9 +49,29 @@ index adc549e0..33b5f9d3 100644
 +		RETURN_THROWS();
 +	}
 +
-+	RETURN_BOOL(php_putenv_impl(setting, setting_len, true) == SUCCESS);
++	if (setting_len == 0 || setting[0] == '=') {
++		zend_argument_value_error(1, "must have a valid syntax");
++		RETURN_THROWS();
++	}
++
++	if (sapi_module.putenv == NULL) {
++		RETURN_FALSE;
++	}
++
++	p = memchr(setting, '=', setting_len);
++	key_len = p ? (size_t) (p - setting) : setting_len;
++
++	zif_putenv(INTERNAL_FUNCTION_PARAM_PASSTHRU);
++	if (EG(exception) || Z_TYPE_P(return_value) != IS_TRUE) {
++		return;
++	}
++
++	if (sapi_putenv(setting, key_len, p ? p + 1 : NULL) != SUCCESS) {
++		RETURN_FALSE;
++	}
 +}
 +/* }}} */
++
  #endif
  
  /* {{{ free_argv()

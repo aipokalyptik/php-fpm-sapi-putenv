@@ -85,6 +85,7 @@ pm = static
 pm.max_children = 2
 clear_env = no
 php_admin_value[a8c_sapi_putenv.enable] = 1
+php_admin_value[disable_functions] = putenv
 php_admin_value[variables_order] = EGPCS
 EOF
 

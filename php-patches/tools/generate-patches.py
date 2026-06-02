@@ -147,158 +147,13 @@ def patch_basic_header(path: pathlib.Path, version: str) -> None:
     path.write_text(text)
 
 
-def helper_80() -> str:
-    return r'''#if defined(HAVE_PUTENV)
-static zend_result php_putenv_impl(const char *setting, size_t setting_len, bool update_sapi) /* {{{ */
-{
-	char *p, **env;
-	putenv_entry pe;
-#ifdef PHP_WIN32
-	char *value = NULL;
-	int equals = 0;
-	int error_code;
-#endif
-
-	if (setting_len == 0 || setting[0] == '=') {
-		zend_argument_value_error(1, "must have a valid syntax");
-		return FAILURE;
-	}
-
-	if (update_sapi && sapi_module.putenv == NULL) {
-		return FAILURE;
-	}
-
-	pe.putenv_string = estrndup(setting, setting_len);
-	pe.key = estrndup(setting, setting_len);
-	if ((p = strchr(pe.key, '='))) {	/* nullify the '=' if there is one */
-		*p = '\0';
-#ifdef PHP_WIN32
-		equals = 1;
-#endif
-	}
-
-	pe.key_len = strlen(pe.key);
-#ifdef PHP_WIN32
-	if (equals) {
-		if (pe.key_len < setting_len - 1) {
-			value = p + 1;
-		} else {
-			/* empty string*/
-			value = p;
-		}
-	}
-#endif
-
-	tsrm_env_lock();
-	zend_hash_str_del(&BG(putenv_ht), pe.key, pe.key_len);
-
-	/* find previous value */
-	pe.previous_value = NULL;
-	for (env = environ; env != NULL && *env != NULL; env++) {
-		if (!strncmp(*env, pe.key, pe.key_len) && (*env)[pe.key_len] == '=') {	/* found it */
-#if defined(PHP_WIN32)
-			/* must copy previous value because MSVCRT's putenv can free the string without notice */
-			pe.previous_value = estrdup(*env);
-#else
-			pe.previous_value = *env;
-#endif
-			break;
-		}
-	}
-
-#if HAVE_UNSETENV
-	if (!p) { /* no '=' means we want to unset it */
-		unsetenv(pe.putenv_string);
-	}
-	if (!p || putenv(pe.putenv_string) == 0) { /* success */
-#else
-# ifndef PHP_WIN32
-	if (putenv(pe.putenv_string) == 0) { /* success */
-# else
-		wchar_t *keyw, *valw = NULL;
-
-		keyw = php_win32_cp_any_to_w(pe.key);
-		if (value) {
-			valw = php_win32_cp_any_to_w(value);
-		}
-		/* valw may be NULL, but the failed conversion still needs to be checked. */
-		if (!keyw || !valw && value) {
-			tsrm_env_unlock();
-			efree(pe.putenv_string);
-			efree(pe.key);
-			free(keyw);
-			free(valw);
-			return FAILURE;
-		}
-
-	error_code = SetEnvironmentVariableW(keyw, valw);
-
-	if (error_code != 0
-# ifndef ZTS
-	/* We need both SetEnvironmentVariable and _putenv here as some
-		dependency lib could use either way to read the environment.
-		Obviously the CRT version will be useful more often. But
-		generally, doing both brings us on the safe track at least
-		in NTS build. */
-	&& _wputenv_s(keyw, valw ? valw : L"") == 0
-# endif
-	) { /* success */
-# endif
-#endif
-		if (update_sapi && sapi_putenv(pe.key, pe.key_len, p ? p + 1 : NULL) != SUCCESS) {
-			tsrm_env_unlock();
-#if defined(PHP_WIN32)
-			free(keyw);
-			free(valw);
-#endif
-			efree(pe.putenv_string);
-			efree(pe.key);
-			return FAILURE;
-		}
-		zend_hash_str_add_mem(&BG(putenv_ht), pe.key, pe.key_len, &pe, sizeof(putenv_entry));
-#ifdef HAVE_TZSET
-		if (!strncmp(pe.key, "TZ", pe.key_len)) {
-			tzset();
-		}
-#endif
-		tsrm_env_unlock();
-#if defined(PHP_WIN32)
-		free(keyw);
-		free(valw);
-#endif
-		return SUCCESS;
-	} else {
-		tsrm_env_unlock();
-		efree(pe.putenv_string);
-		efree(pe.key);
-#if defined(PHP_WIN32)
-		free(keyw);
-		free(valw);
-#endif
-		return FAILURE;
-	}
-}
-/* }}} */
-
-/* {{{ Set the value of an environment variable */
-PHP_FUNCTION(putenv)
-{
-	char *setting;
-	size_t setting_len;
-
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_STRING(setting, setting_len)
-	ZEND_PARSE_PARAMETERS_END();
-
-	RETURN_BOOL(php_putenv_impl(setting, setting_len, false) == SUCCESS);
-}
-/* }}} */
-
+def a8c_sapi_putenv_function() -> str:
+    return r'''
 /* {{{ Set the value of an environment variable and the current SAPI request environment */
 PHP_FUNCTION(a8c_sapi_putenv)
 {
-	char *setting;
-	size_t setting_len;
+	char *setting, *p;
+	size_t setting_len, key_len;
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
 		Z_PARAM_STRING(setting, setting_len)
@@ -309,168 +164,28 @@ PHP_FUNCTION(a8c_sapi_putenv)
 		RETURN_THROWS();
 	}
 
-	RETURN_BOOL(php_putenv_impl(setting, setting_len, true) == SUCCESS);
-}
-/* }}} */
-#endif
-'''
-
-
-def helper_81_plus() -> str:
-    return r'''#ifdef HAVE_PUTENV
-static zend_result php_putenv_impl(const char *setting, size_t setting_len, bool update_sapi) /* {{{ */
-{
-	char *p, **env;
-	putenv_entry pe;
-#ifdef PHP_WIN32
-	const char *value = NULL;
-	int error_code;
-#endif
-
 	if (setting_len == 0 || setting[0] == '=') {
 		zend_argument_value_error(1, "must have a valid syntax");
-		return FAILURE;
-	}
-
-	if (update_sapi && sapi_module.putenv == NULL) {
-		return FAILURE;
-	}
-
-	pe.putenv_string = zend_strndup(setting, setting_len);
-	if ((p = strchr(setting, '='))) {
-		pe.key = zend_string_init(setting, p - setting, 0);
-#ifdef PHP_WIN32
-		value = p + 1;
-#endif
-	} else {
-		pe.key = zend_string_init(setting, setting_len, 0);
-	}
-
-	tsrm_env_lock();
-	zend_hash_del(&BG(putenv_ht), pe.key);
-
-	/* find previous value */
-	pe.previous_value = NULL;
-	for (env = environ; env != NULL && *env != NULL; env++) {
-		if (!strncmp(*env, ZSTR_VAL(pe.key), ZSTR_LEN(pe.key))
-				&& (*env)[ZSTR_LEN(pe.key)] == '=') {	/* found it */
-#ifdef PHP_WIN32
-			/* must copy previous value because MSVCRT's putenv can free the string without notice */
-			pe.previous_value = estrdup(*env);
-#else
-			pe.previous_value = *env;
-#endif
-			break;
-		}
-	}
-
-#ifdef HAVE_UNSETENV
-	if (!p) { /* no '=' means we want to unset it */
-		unsetenv(pe.putenv_string);
-	}
-	if (!p || putenv(pe.putenv_string) == 0) { /* success */
-#else
-# ifndef PHP_WIN32
-	if (putenv(pe.putenv_string) == 0) { /* success */
-# else
-		wchar_t *keyw, *valw = NULL;
-
-		keyw = php_win32_cp_any_to_w(ZSTR_VAL(pe.key));
-		if (value) {
-			valw = php_win32_cp_any_to_w(value);
-		}
-		/* valw may be NULL, but the failed conversion still needs to be checked. */
-		if (!keyw || (!valw && value)) {
-			tsrm_env_unlock();
-			free(pe.putenv_string);
-			zend_string_release(pe.key);
-			free(keyw);
-			free(valw);
-			return FAILURE;
-		}
-
-	error_code = SetEnvironmentVariableW(keyw, valw);
-
-	if (error_code != 0
-# ifndef ZTS
-	/* We need both SetEnvironmentVariable and _putenv here as some
-		dependency lib could use either way to read the environment.
-		Obviously the CRT version will be useful more often. But
-		generally, doing both brings us on the safe track at least
-		in NTS build. */
-	&& _wputenv_s(keyw, valw ? valw : L"") == 0
-# endif
-	) { /* success */
-# endif
-#endif
-		if (update_sapi && sapi_putenv(ZSTR_VAL(pe.key), ZSTR_LEN(pe.key), p ? p + 1 : NULL) != SUCCESS) {
-			tsrm_env_unlock();
-#ifdef PHP_WIN32
-			free(keyw);
-			free(valw);
-#endif
-			free(pe.putenv_string);
-			zend_string_release(pe.key);
-			return FAILURE;
-		}
-		zend_hash_add_mem(&BG(putenv_ht), pe.key, &pe, sizeof(putenv_entry));
-#ifdef HAVE_TZSET
-		if (zend_string_equals_literal_ci(pe.key, "TZ")) {
-			tzset();
-		}
-#endif
-		tsrm_env_unlock();
-#ifdef PHP_WIN32
-		free(keyw);
-		free(valw);
-#endif
-		return SUCCESS;
-	} else {
-		tsrm_env_unlock();
-		free(pe.putenv_string);
-		zend_string_release(pe.key);
-#ifdef PHP_WIN32
-		free(keyw);
-		free(valw);
-#endif
-		return FAILURE;
-	}
-}
-/* }}} */
-
-/* {{{ Set the value of an environment variable */
-PHP_FUNCTION(putenv)
-{
-	char *setting;
-	size_t setting_len;
-
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_STRING(setting, setting_len)
-	ZEND_PARSE_PARAMETERS_END();
-
-	RETURN_BOOL(php_putenv_impl(setting, setting_len, false) == SUCCESS);
-}
-/* }}} */
-
-/* {{{ Set the value of an environment variable and the current SAPI request environment */
-PHP_FUNCTION(a8c_sapi_putenv)
-{
-	char *setting;
-	size_t setting_len;
-
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_STRING(setting, setting_len)
-	ZEND_PARSE_PARAMETERS_END();
-
-	if (!BG(a8c_sapi_putenv_enabled)) {
-		zend_throw_error(NULL, "a8c_sapi_putenv() is disabled");
 		RETURN_THROWS();
 	}
 
-	RETURN_BOOL(php_putenv_impl(setting, setting_len, true) == SUCCESS);
+	if (sapi_module.putenv == NULL) {
+		RETURN_FALSE;
+	}
+
+	p = memchr(setting, '=', setting_len);
+	key_len = p ? (size_t) (p - setting) : setting_len;
+
+	zif_putenv(INTERNAL_FUNCTION_PARAM_PASSTHRU);
+	if (EG(exception) || Z_TYPE_P(return_value) != IS_TRUE) {
+		return;
+	}
+
+	if (sapi_putenv(setting, key_len, p ? p + 1 : NULL) != SUCCESS) {
+		RETURN_FALSE;
+	}
 }
 /* }}} */
-#endif
 '''
 
 
@@ -496,35 +211,16 @@ def patch_basic_c(path: pathlib.Path, version: str) -> None:
     if "UNREGISTER_INI_ENTRIES();" not in text:
         text = replace_once(text, "\nPHP_MSHUTDOWN_FUNCTION(basic) /* {{{ */\n{\n", "\nPHP_MSHUTDOWN_FUNCTION(basic) /* {{{ */\n{\n\tUNREGISTER_INI_ENTRIES();\n", path)
 
-    old = extract_putenv_function(text)
-    text = text.replace(old, helper_80() if version == "8.0" else helper_81_plus(), 1)
+    if "PHP_FUNCTION(a8c_sapi_putenv)" not in text:
+        insert_at = find_putenv_function_close(text)
+        text = text[:insert_at] + a8c_sapi_putenv_function() + text[insert_at:]
     path.write_text(text)
 
 
-def extract_putenv_function(text: str) -> str:
+def find_putenv_function_close(text: str) -> int:
     func_start = text.index("PHP_FUNCTION(putenv)")
-    if_start_defined = text.rfind("#if defined(HAVE_PUTENV)", 0, func_start)
-    if_start_ifdef = text.rfind("#ifdef HAVE_PUTENV", 0, func_start)
-    start = max(if_start_defined, if_start_ifdef)
-    if start < 0:
-        raise RuntimeError("could not find HAVE_PUTENV guard for putenv")
-
-    brace = text.index("{", func_start)
-    depth = 0
-    close = None
-    for i in range(brace, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                close = i + 1
-                break
-    if close is None:
-        raise RuntimeError("could not find end of PHP_FUNCTION(putenv)")
-
-    end = text.index("\n#endif", close) + len("\n#endif\n")
-    return text[start:end]
+    fold_marker = "\n/* }}} */"
+    return text.index(fold_marker, func_start) + len(fold_marker)
 
 
 def patch_stub(path: pathlib.Path) -> None:

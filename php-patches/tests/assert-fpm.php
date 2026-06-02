@@ -28,6 +28,9 @@ $fuzz = load_json($argv[3]);
 if (($probe['sapi'] ?? null) !== 'fpm-fcgi' || !($probe['function_exists'] ?? false)) {
     fail('probe did not run under fpm with a8c_sapi_putenv registered');
 }
+if (($probe['putenv_function_exists'] ?? true) !== false) {
+    fail('fpm test did not disable userland putenv');
+}
 
 $expected = [
     'A8C_PATCH_SECRET_ONE' => 'secret-one',

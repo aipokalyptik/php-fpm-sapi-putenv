@@ -7,6 +7,7 @@ $out = [
     'php_version' => PHP_VERSION,
     'sapi' => PHP_SAPI,
     'function_exists' => function_exists('a8c_sapi_putenv'),
+    'putenv_function_exists' => function_exists('putenv'),
     'keys' => [],
 ];
 
